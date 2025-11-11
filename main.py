@@ -36,14 +36,12 @@ else:
         print("❌ ERROR: system_prompt.txt is empty.")
         SYSTEM_PROMPT = "You are MedGuard AI."
 
-
 # === Request model ===
 class PromptRequest(BaseModel):
     prompt: str
     user_id: str | None = None
 
-
-# === Endpoint ===
+# === AI Endpoint ===
 @app.post("/ask")
 def ask_ai(request: PromptRequest):
     try:
@@ -52,5 +50,10 @@ def ask_ai(request: PromptRequest):
     except Exception as e:
         return {"error": str(e)}
 
+# === Health Check Endpoint for uptime pinging ===
+@app.get("/")
+@app.get("/health")
+def health_check():
+    return {"status": "OK"}
 
-print("✅ MedGuard AI server ready. System prompt & environment loaded successfully.")
+print("MedGuard AI server ready. System prompt & environment loaded successfully.")
