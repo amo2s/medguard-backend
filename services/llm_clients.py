@@ -2,8 +2,11 @@ import os
 import requests
 from openai import OpenAI
 from google import genai
+from dotenv import load_dotenv
 
 # === Load API keys ===
+load_dotenv() # Ensures .env is loaded
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -11,22 +14,35 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # === Endpoints ===
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+
+# UPDATED: Switched to v1 API for better stability with Gemini 1.5 Flash
+GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
 
 # === LLM Clients ===
-deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+try:
+    deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+except:
+    deepseek_client = None
+
+try:
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+except:
+    gemini_client = None
 
 
-# === GROQ ===
+# === GROQ (Updated Model) ===
 def call_groq(prompt: str, system_prompt: str):
+    if not GROQ_API_KEY:
+        raise Exception("Groq API Key missing")
+
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
 
     payload = {
-        "model": "llama-3.1-70b-versatile",
+        # UPDATED: Changed from 3.1 to 3.3
+        "model": "llama-3.3-70b-versatile",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
@@ -46,6 +62,9 @@ def call_groq(prompt: str, system_prompt: str):
 
 # === DEEPSEEK ===
 def call_deepseek(prompt: str, system_prompt: str):
+    if not deepseek_client or not DEEPSEEK_API_KEY:
+        raise Exception("DeepSeek Client or Key missing")
+
     response = deepseek_client.chat.completions.create(
         model="deepseek-chat",
         messages=[
@@ -55,7 +74,6 @@ def call_deepseek(prompt: str, system_prompt: str):
         stream=False
     )
 
-    # DeepSeek sometimes returns as "message" or "content"
     return (
         response.choices[0].message.content
         if hasattr(response.choices[0], "message")
@@ -63,8 +81,11 @@ def call_deepseek(prompt: str, system_prompt: str):
     )
 
 
-# === GEMINI ===
+# === GEMINI (Fixed Endpoint) ===
 def call_gemini(prompt: str, system_prompt: str):
+    if not GEMINI_API_KEY:
+        raise Exception("Gemini Key missing")
+
     payload = {
         "contents": [
             {"parts": [{"text": f"{system_prompt}\n\nUser: {prompt}"}]}
@@ -73,17 +94,17 @@ def call_gemini(prompt: str, system_prompt: str):
 
     response = requests.post(
         f"{GEMINI_ENDPOINT}?key={GEMINI_API_KEY}",
+        headers={"Content-Type": "application/json"},
         json=payload,
         timeout=20
     )
 
     if response.status_code == 200:
         data = response.json()
-
         try:
             return data["candidates"][0]["content"]["parts"][0]["text"]
         except:
-            return data.get("output_text", "")  # fallback extraction
+            return data.get("output_text", "")
 
     raise Exception(f"Gemini API error: {response.status_code} {response.text}")
 
@@ -94,11 +115,15 @@ def ask_any(prompt: str, system_prompt: str):
     Tries Groq → DeepSeek → Gemini in order.
     Returns first successful response.
     """
-
+    errors = []
+    
     for provider in [call_groq, call_deepseek, call_gemini]:
         try:
             return provider(prompt, system_prompt)
-        except Exception:
+        except Exception as e:
+            print(f"Provider failed: {e}")
+            errors.append(str(e))
             continue
 
+    print(f"ALL FAILED. Errors: {errors}")
     raise Exception("All providers failed. Try again later.")
